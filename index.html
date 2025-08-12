@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arena Cacing Kosmik (Final Fix)</title>
+    <title>Arena Cacing Kosmik (Mobile Control Fix)</title>
     <!-- Memuat Tone.js untuk musik dan suara -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
     <style>
@@ -94,6 +94,11 @@
         const worldSize = 2000;
         let mousePos = { x: canvas.width / 2, y: canvas.height / 2 };
         let isBoosting = false;
+        
+        // --- NEW: Mobile Joystick State ---
+        let joystickActive = false;
+        let joystickCenter = { x: 0, y: 0 };
+        let joystickVector = { x: 0, y: 0 };
 
         class Worm {
             constructor(isPlayer = false) {
@@ -126,9 +131,22 @@
                     } else {
                         this.speed = this.baseSpeed;
                     }
-                    const worldMouseX = mousePos.x + camera.x;
-                    const worldMouseY = mousePos.y + camera.y;
-                    this.target = { x: worldMouseX, y: worldMouseY };
+
+                    // NEW: Differentiate between mobile and desktop controls
+                    if (joystickActive) {
+                        // Mobile touch logic
+                        const dist = Math.sqrt(joystickVector.x**2 + joystickVector.y**2);
+                        if (dist > 0) {
+                            const angle = Math.atan2(joystickVector.y, joystickVector.x);
+                            this.target.x = this.segments[0].x + Math.cos(angle) * 100;
+                            this.target.y = this.segments[0].y + Math.sin(angle) * 100;
+                        }
+                    } else {
+                        // Desktop mouse logic
+                        const worldMouseX = mousePos.x + camera.x;
+                        const worldMouseY = mousePos.y + camera.y;
+                        this.target = { x: worldMouseX, y: worldMouseY };
+                    }
                 } else {
                     if (Math.random() > 0.99) {
                         this.target = { x: Math.random() * worldSize, y: Math.random() * worldSize };
@@ -201,7 +219,6 @@
             }
         }
 
-        // FIX: Renamed init() to resetGame() for clarity
         function resetGame() {
             player = new Worm(true);
             foods = [];
@@ -214,9 +231,7 @@
 
         function update() {
             if (gameState !== 'playing') return;
-
             const allWorms = [player, ...aiWorms];
-            
             allWorms.forEach(w => w.update());
 
             allWorms.forEach(worm => {
@@ -311,20 +326,32 @@
             if(player) player.draw();
 
             ctx.restore();
+
+            // NEW: Draw joystick on top of everything
+            if (joystickActive) {
+                ctx.beginPath();
+                ctx.arc(joystickCenter.x, joystickCenter.y, 50, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(joystickCenter.x + joystickVector.x, joystickCenter.y + joystickVector.y, 30, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.fill();
+            }
         }
 
         function gameLoop() {
             if (gameState === 'playing') {
                 update();
             }
-            // FIX: Always draw the game world, even when paused or on menus
             draw();
             requestAnimationFrame(gameLoop);
         }
 
         function startGame() {
             const startPlaying = () => {
-                resetGame(); // Use the new reset function
+                resetGame();
                 if (!sfx) initAudio();
                 Tone.Transport.start();
                 gameState = 'playing';
@@ -366,20 +393,51 @@
             }, "1n").start(0);
         }
 
-        // Event Listeners
-        startButton.addEventListener('click', startGame);
-        restartButton.addEventListener('click', startGame);
+        // --- EVENT LISTENERS ---
+        // Desktop
         window.addEventListener('mousemove', (e) => {
             mousePos = { x: e.clientX, y: e.clientY };
         });
         window.addEventListener('mousedown', () => { if(gameState === 'playing') isBoosting = true; });
         window.addEventListener('mouseup', () => { if(gameState === 'playing') isBoosting = false; });
+        
+        // NEW: Mobile Touch Controls
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (gameState === 'playing') {
+                joystickActive = true;
+                joystickCenter = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                isBoosting = true;
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (gameState === 'playing' && joystickActive) {
+                const currentPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                let dx = currentPos.x - joystickCenter.x;
+                let dy = currentPos.y - joystickCenter.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                const maxDist = 60;
+                if (dist > maxDist) {
+                    dx = (dx / dist) * maxDist;
+                    dy = (dy / dist) * maxDist;
+                }
+                joystickVector = { x: dx, y: dy };
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            joystickActive = false;
+            isBoosting = false;
+        });
+
         window.addEventListener('resize', () => {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
         });
         
-        // FIX: Initialize the game state once before the loop starts
         resetGame();
         gameLoop();
 
