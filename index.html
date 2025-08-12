@@ -259,9 +259,11 @@
 
     function update() {
         if (gameState !== 'playing') return;
+
         const allWorms = [player, ...aiWorms];
         allWorms.forEach(w => w.update());
 
+        // Food collision (tidak berubah)
         allWorms.forEach(worm => {
             for (let i = foods.length - 1; i >= 0; i--) {
                 const food = foods[i];
@@ -279,28 +281,60 @@
             }
         });
 
+        // --- [FIX] Logika Tabrakan yang Diperbaiki ---
         const wormsToKill = new Set();
-        allWorms.forEach(attacker => {
+        for (let i = 0; i < allWorms.length; i++) {
+            const attacker = allWorms[i];
             const head = attacker.segments[0];
+
+            // 1. Cek tabrakan dinding
             if (head.x < 0 || head.x > worldSize || head.y < 0 || head.y > worldSize) {
                 wormsToKill.add(attacker);
-                return;
+                continue; // Lanjut ke cacing berikutnya
             }
-            allWorms.forEach(target => {
-                if (attacker.id === target.id) return;
-                for (let i = 1; i < target.segments.length; i++) {
-                    const segment = target.segments[i];
+
+            for (let j = 0; j < allWorms.length; j++) {
+                if (i === j) continue; // Jangan cek diri sendiri
+                const target = allWorms[j];
+
+                // 2. Cek tabrakan kepala ke badan
+                for (let k = 1; k < target.segments.length; k++) {
+                    const segment = target.segments[k];
                     const dx = head.x - segment.x;
                     const dy = head.y - segment.y;
-                    if (dx * dx + dy * dy < (attacker.radius * 0.8) ** 2) {
+                    if (dx * dx + dy * dy < (attacker.radius * 0.9) ** 2) {
                         wormsToKill.add(attacker);
-                        return;
+                        break; // Keluar dari loop badan
                     }
                 }
-            });
-        });
+                if (wormsToKill.has(attacker)) continue;
+
+                // 3. Cek tabrakan kepala ke kepala (head-on)
+                // Hanya cek jika j > i untuk menghindari pengecekan ganda
+                if (j > i) {
+                    const targetHead = target.segments[0];
+                    const dx_h = head.x - targetHead.x;
+                    const dy_h = head.y - targetHead.y;
+                    if (dx_h * dx_h + dy_h * dy_h < (attacker.radius + target.radius) ** 2) {
+                        // Jika ukuran beda, yang lebih kecil mati
+                        if (attacker.segments.length < target.segments.length) {
+                            wormsToKill.add(attacker);
+                        } else if (target.segments.length < attacker.segments.length) {
+                            wormsToKill.add(target);
+                        } else { // Jika ukuran sama, keduanya mati
+                            wormsToKill.add(attacker);
+                            wormsToKill.add(target);
+                        }
+                    }
+                }
+            }
+        }
+        
         wormsToKill.forEach(worm => killWorm(worm));
-        if (gameState === 'playing') scoreEl.textContent = player.segments.length;
+        if (gameState === 'playing' && player) {
+            scoreEl.textContent = player.segments.length;
+        }
+    }
     }
 
     function killWorm(worm) {
@@ -322,7 +356,7 @@
         }
     }
 
-    function draw() {
+   function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (player && camera) {
             camera.x += (player.segments[0].x - canvas.width / 2 - camera.x) * 0.1;
@@ -333,9 +367,18 @@
 
         ctx.save();
         ctx.translate(-camera.x, -camera.y);
+        
+        // Gambar makanan dan cacing
         foods.forEach(f => f.draw());
         aiWorms.forEach(w => w.draw());
         if (player) player.draw();
+
+        // --- [FIX] Menambahkan visual untuk dinding batas ---
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+        ctx.lineWidth = 20;
+        ctx.strokeRect(0, 0, worldSize, worldSize);
+        // --- Akhir dari tambahan ---
+
         ctx.restore();
     }
 
@@ -425,3 +468,4 @@
 
 </body>
 </html>
+
