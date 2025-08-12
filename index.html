@@ -1,4 +1,15 @@
-const canvas = document.getElementById('gameCanvas');
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Arena Cacing Kosmik</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+
+  <style>
+    /*
+      const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
@@ -335,3 +346,379 @@ const canvas = document.getElementById('gameCanvas');
         // [FIX] Panggilan ini sangat penting untuk menginisialisasi game sebelum dimulai
         resetGame();
         gameLoop();
+    */
+
+    body { margin: 0; background-color: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Arial', sans-serif; -webkit-user-select: none; user-select: none; }
+    canvas { display: block; background-color: #0d1117; }
+    .ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; flex-direction: column; background-color: rgba(0,0,0,0.8); color: white; text-align: center; z-index: 10; padding: 20px; box-sizing: border-box; }
+    h1 { font-size: 2.5rem; text-shadow: 0 0 10px #00ffff; }
+    p { font-size: 1.1rem; line-height: 1.5; }
+    button { padding: 1rem 2rem; font-size: 1.5rem; background-color: #00aaff; color: white; border: 2px solid #00ffff; border-radius: 10px; cursor: pointer; transition: all 0.2s; }
+    button:hover, button:active { background-color: #00ffff; color: #000; }
+    #score-board { position: absolute; top: 20px; left: 20px; color: white; font-size: 1.5em; text-shadow: 0 0 5px #fff; display: none; }
+
+  </style>
+</head>
+<body>
+  
+  <canvas id="gameCanvas"></canvas>
+  <div id="score-board">Panjang: <span id="score">0</span></div>
+  <div id="start-screen" class="ui-overlay">
+      <h1>Arena Cacing Kosmik</h1>
+      <p id="instruction-text"></p>
+      <p>Jangan menabrak musuh atau dinding!</p>
+      <button id="start-button">Mulai</button>
+  </div>
+  <div id="game-over-screen" class="ui-overlay" style="display: none;">
+      <h1>GAME OVER</h1>
+      <p>Panjang Akhir: <span id="final-score">0</span></p>
+      <button id="restart-button">Coba Lagi</button>
+  </div>
+
+  <script>
+    /*
+      SALIN DAN TEMPEL SELURUH KODE JAVASCRIPT DARI JAWABAN SAYA SEBELUMNYA DI SINI
+      (Ini adalah kode yang panjang, mulai dari 'const canvas = ...' sampai 'gameLoop();')
+    */
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // --- UI Elements ---
+    const scoreEl = document.getElementById('score');
+    const scoreBoard = document.getElementById('score-board');
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const finalScoreEl = document.getElementById('final-score');
+    const startButton = document.getElementById('start-button');
+    const restartButton = document.getElementById('restart-button');
+    const instructionText = document.getElementById('instruction-text');
+
+    // --- Game State ---
+    let player, foods, aiWorms, camera, sfx;
+    let gameState = 'start';
+    const worldSize = 3000;
+    let isBoosting = false;
+
+    const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    if (isTouchDevice) {
+        instructionText.innerHTML = "<b>Sentuh dan geser</b> untuk mengarahkan cacing.<br>Cacing akan nge-boost otomatis saat disentuh.";
+    } else {
+        instructionText.innerHTML = "<b>Gerakkan mouse</b> untuk mengarahkan cacing.<br><b>Tahan klik</b> untuk nge-boost!";
+    }
+
+    // --- Class Definitions ---
+    class Worm {
+        constructor(isPlayer = false) {
+            this.isPlayer = isPlayer;
+            this.id = Math.random();
+            this.radius = 12;
+            this.baseSpeed = isPlayer ? 3.5 : 2.2;
+            this.speed = this.baseSpeed;
+            this.color = `hsl(${Math.random() * 360}, 100%, 60%)`;
+            this.angle = Math.random() * Math.PI * 2;
+            this.targetFood = null;
+
+            this.segments = [];
+            const startX = Math.random() * (worldSize - 400) + 200;
+            const startY = Math.random() * (worldSize - 400) + 200;
+            for (let i = 0; i < 15; i++) {
+                this.segments.push({ x: startX, y: startY });
+            }
+        }
+
+        update() {
+            if (this.isPlayer) {
+                if (isBoosting && this.segments.length > 15) {
+                    this.speed = this.baseSpeed * 2;
+                    if (Math.random() > 0.85) {
+                        if (this.segments.length > 1) {
+                            const tail = this.segments.pop();
+                            const droppedFood = new Food(tail.x, tail.y, true);
+                            droppedFood.color = this.color;
+                            foods.push(droppedFood);
+                        }
+                    }
+                } else {
+                    this.speed = this.baseSpeed;
+                }
+            } else { // AI Logic
+                if (!this.targetFood || this.targetFood.eaten || Math.random() < 0.05) {
+                    let closestFood = null;
+                    let minDistanceSq = Infinity;
+                    foods.forEach(food => {
+                        if (food.eaten) return;
+                        const dx = food.x - this.segments[0].x;
+                        const dy = food.y - this.segments[0].y;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq < minDistanceSq) {
+                            minDistanceSq = distSq;
+                            closestFood = food;
+                        }
+                    });
+                    this.targetFood = closestFood;
+                }
+                if (this.targetFood) {
+                    const dx = this.targetFood.x - this.segments[0].x;
+                    const dy = this.targetFood.y - this.segments[0].y;
+                    const targetAngle = Math.atan2(dy, dx);
+                    let angleDiff = targetAngle - this.angle;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    this.angle += angleDiff * 0.08;
+                }
+            }
+
+            const vx = Math.cos(this.angle) * this.speed;
+            const vy = Math.sin(this.angle) * this.speed;
+            this.segments[0].x += vx;
+            this.segments[0].y += vy;
+
+            for (let i = 1; i < this.segments.length; i++) {
+                const leader = this.segments[i - 1];
+                const follower = this.segments[i];
+                const dx_s = leader.x - follower.x;
+                const dy_s = leader.y - follower.y;
+                const dist_s = Math.sqrt(dx_s * dx_s + dy_s * dy_s);
+                const lag = this.radius * 0.5;
+                if (dist_s > lag) {
+                    follower.x = leader.x - (dx_s / dist_s) * lag;
+                    follower.y = leader.y - (dy_s / dist_s) * lag;
+                }
+            }
+        }
+
+        draw() {
+            for (let i = this.segments.length - 1; i >= 0; i--) {
+                ctx.beginPath();
+                const scale = 1 - i / (this.segments.length * 1.5);
+                ctx.arc(this.segments[i].x, this.segments[i].y, this.radius * scale, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+            }
+            const head = this.segments[0];
+            const eyeRadius = this.radius / 3.5;
+            const eyeX1 = head.x + Math.cos(this.angle + Math.PI / 4) * this.radius * 0.6;
+            const eyeY1 = head.y + Math.sin(this.angle + Math.PI / 4) * this.radius * 0.6;
+            const eyeX2 = head.x + Math.cos(this.angle - Math.PI / 4) * this.radius * 0.6;
+            const eyeY2 = head.y + Math.sin(this.angle - Math.PI / 4) * this.radius * 0.6;
+
+            ctx.fillStyle = 'white';
+            ctx.beginPath(); ctx.arc(eyeX1, eyeY1, eyeRadius, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(eyeX2, eyeY2, eyeRadius, 0, Math.PI * 2); ctx.fill();
+
+            ctx.fillStyle = 'black';
+            ctx.beginPath(); ctx.arc(eyeX1, eyeY1, eyeRadius / 2, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(eyeX2, eyeY2, eyeRadius / 2, 0, Math.PI * 2); ctx.fill();
+        }
+
+        grow() {
+            for (let i = 0; i < 3; i++) {
+                this.segments.push({ ...this.segments[this.segments.length - 1] });
+            }
+        }
+    }
+
+    class Food {
+        constructor(x, y, isDeathPellet = false) {
+            this.x = x || Math.random() * worldSize;
+            this.y = y || Math.random() * worldSize;
+            this.radius = isDeathPellet ? 8 : 6;
+            this.isDeathPellet = isDeathPellet;
+            this.color = `hsl(${Math.random() * 360}, 100%, 75%)`;
+            this.eaten = false;
+        }
+        draw() {
+            ctx.shadowColor = this.color;
+            ctx.shadowBlur = this.isDeathPellet ? 20 : 15;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fillStyle = this.color;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+    }
+
+    // --- Game Functions ---
+    function resetGame() {
+        player = new Worm(true);
+        camera = { x: player.segments[0].x - canvas.width / 2, y: player.segments[0].y - canvas.height / 2 };
+        foods = [];
+        for (let i = 0; i < 400; i++) foods.push(new Food());
+        aiWorms = [];
+        for (let i = 0; i < 20; i++) aiWorms.push(new Worm());
+    }
+
+    function update() {
+        if (gameState !== 'playing') return;
+        const allWorms = [player, ...aiWorms];
+        allWorms.forEach(w => w.update());
+
+        allWorms.forEach(worm => {
+            for (let i = foods.length - 1; i >= 0; i--) {
+                const food = foods[i];
+                if (food.eaten) continue;
+                const dx = worm.segments[0].x - food.x;
+                const dy = worm.segments[0].y - food.y;
+                if (dx * dx + dy * dy < (worm.radius + food.radius) ** 2) {
+                    if (worm.isPlayer && sfx) sfx.eat.triggerAttackRelease("C5", "8n");
+                    food.eaten = true;
+                    foods.splice(i, 1);
+                    if (!food.isDeathPellet) foods.push(new Food());
+                    worm.grow();
+                    break;
+                }
+            }
+        });
+
+        const wormsToKill = new Set();
+        allWorms.forEach(attacker => {
+            const head = attacker.segments[0];
+            if (head.x < 0 || head.x > worldSize || head.y < 0 || head.y > worldSize) {
+                wormsToKill.add(attacker);
+                return;
+            }
+            allWorms.forEach(target => {
+                if (attacker.id === target.id) return;
+                for (let i = 1; i < target.segments.length; i++) {
+                    const segment = target.segments[i];
+                    const dx = head.x - segment.x;
+                    const dy = head.y - segment.y;
+                    if (dx * dx + dy * dy < (attacker.radius * 0.8) ** 2) {
+                        wormsToKill.add(attacker);
+                        return;
+                    }
+                }
+            });
+        });
+        wormsToKill.forEach(worm => killWorm(worm));
+        if (gameState === 'playing') scoreEl.textContent = player.segments.length;
+    }
+
+    function killWorm(worm) {
+        if (worm.isPlayer) {
+            if (gameState === 'playing') endGame();
+            return;
+        }
+        const index = aiWorms.findIndex(w => w.id === worm.id);
+        if (index > -1) {
+            const foodCount = Math.min(worm.segments.length, 40);
+            for (let i = 0; i < foodCount; i++) {
+                const seg = worm.segments[Math.floor(Math.random() * worm.segments.length)];
+                const food = new Food(seg.x, seg.y, true);
+                food.color = worm.color;
+                foods.push(food);
+            }
+            aiWorms.splice(index, 1);
+            setTimeout(() => aiWorms.push(new Worm()), 3000);
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (player && camera) {
+            camera.x += (player.segments[0].x - canvas.width / 2 - camera.x) * 0.1;
+            camera.y += (player.segments[0].y - canvas.height / 2 - camera.y) * 0.1;
+        } else {
+            return;
+        }
+
+        ctx.save();
+        ctx.translate(-camera.x, -camera.y);
+        foods.forEach(f => f.draw());
+        aiWorms.forEach(w => w.draw());
+        if (player) player.draw();
+        ctx.restore();
+    }
+
+    function gameLoop() {
+        if (gameState === 'playing') {
+            update();
+        }
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function startGame() {
+        const startPlaying = () => {
+            resetGame();
+            if (!sfx) initAudio();
+            if (Tone.Transport.state !== 'started') Tone.Transport.start();
+            gameState = 'playing';
+            startScreen.style.display = 'none';
+            gameOverScreen.style.display = 'none';
+            scoreBoard.style.display = 'block';
+        };
+        if (Tone.context.state !== 'running') {
+            Tone.start().then(startPlaying).catch(e => console.error("Tone.js start failed:", e));
+        } else {
+            startPlaying();
+        }
+    }
+
+    function endGame() {
+        if (gameState !== 'playing') return;
+        if (sfx && sfx.gameOver) sfx.gameOver.triggerAttackRelease("C3", "2n");
+        if (Tone.Transport.state === 'started') Tone.Transport.stop();
+        gameState = 'gameOver';
+        finalScoreEl.textContent = player.segments.length;
+        gameOverScreen.style.display = 'flex';
+        scoreBoard.style.display = 'none';
+    }
+
+    function initAudio() {
+        if (sfx) return;
+        sfx = {
+            eat: new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.1, release: 0.2 } }).toDestination(),
+            gameOver: new Tone.Synth().toDestination()
+        };
+    }
+
+    // --- Event Listeners ---
+    startButton.addEventListener('click', startGame);
+    restartButton.addEventListener('click', startGame);
+
+    function updatePlayerAngle(clientX, clientY) {
+        if (!player) return;
+        const canvasCenterX = canvas.width / 2;
+        const canvasCenterY = canvas.height / 2;
+        player.angle = Math.atan2(clientY - canvasCenterY, clientX - canvasCenterX);
+    }
+
+    window.addEventListener('mousemove', (e) => {
+        if (isTouchDevice || gameState !== 'playing') return;
+        updatePlayerAngle(e.clientX, e.clientY);
+    });
+    window.addEventListener('mousedown', () => { if (gameState === 'playing' && !isTouchDevice) isBoosting = true; });
+    window.addEventListener('mouseup', () => { if (gameState === 'playing' && !isTouchDevice) isBoosting = false; });
+
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (gameState === 'playing') {
+            isBoosting = true;
+            updatePlayerAngle(e.touches[0].clientX, e.touches[0].clientY);
+        }
+    }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if (gameState === 'playing') {
+            updatePlayerAngle(e.touches[0].clientX, e.touches[0].clientY);
+        }
+    }, { passive: false });
+    canvas.addEventListener('touchend', () => { if (gameState === 'playing') isBoosting = false; });
+
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    });
+
+    // --- Initial Call ---
+    resetGame();
+    gameLoop();
+
+  </script>
+
+</body>
+</html>
